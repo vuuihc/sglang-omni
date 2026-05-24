@@ -24,7 +24,7 @@ from sglang_omni.utils.imports import import_string
 
 
 @dataclass
-class StageProcessSpec:
+class StageLaunchConfig:
     """Everything a stage subprocess needs — no re-compilation required.
 
     All string references (factory, merge_fn) are dotted import
@@ -98,7 +98,7 @@ class StageWorkerProcessSpec:
     """Everything one OS process needs to run one or more stages."""
 
     process_name: str
-    stage_specs: list[StageProcessSpec]
+    stage_specs: list[StageLaunchConfig]
     gpu_id: int | None = None
 
 
@@ -180,7 +180,7 @@ class StageGroup:
         return len(self.process_specs)
 
     @property
-    def specs(self) -> list[StageProcessSpec]:
+    def specs(self) -> list[StageLaunchConfig]:
         return [
             stage_spec
             for process_spec in self.process_specs
@@ -188,7 +188,7 @@ class StageGroup:
         ]
 
     @property
-    def leader_spec(self) -> StageProcessSpec:
+    def leader_spec(self) -> StageLaunchConfig:
         for spec in self.specs:
             if spec.role in {"single", "leader"}:
                 return spec
@@ -396,7 +396,7 @@ def _run_process(
 
 
 def _construct_stage(
-    spec: StageProcessSpec,
+    spec: StageLaunchConfig,
     log: logging.Logger,
 ) -> Stage:
     gpu_id = spec.relay_config.get("gpu_id")
@@ -588,7 +588,7 @@ def _construct_stage(
 
 
 def _construct_scheduler(
-    spec: StageProcessSpec,
+    spec: StageLaunchConfig,
     gpu_id: int | None,
     log: logging.Logger,
 ) -> Any:
@@ -611,7 +611,7 @@ def _factory_args_use_cuda(factory_args: Mapping[str, Any]) -> bool:
 
 
 def get_stage_process_env(
-    spec: StageProcessSpec,
+    spec: StageLaunchConfig,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Return per-process env overrides needed before TP child startup."""
@@ -641,7 +641,7 @@ def get_stage_process_env(
 
 
 def _prepare_cuda_environment(
-    spec: StageProcessSpec,
+    spec: StageLaunchConfig,
     log: logging.Logger,
 ) -> None:
     """Map TP rank processes to one visible CUDA device before torch init."""
@@ -673,7 +673,7 @@ def _prepare_cuda_environment(
     )
 
 
-def _normalize_spec_gpu_id_to_local_device(spec: StageProcessSpec) -> None:
+def _normalize_spec_gpu_id_to_local_device(spec: StageLaunchConfig) -> None:
     if "gpu_id" in spec.factory_args:
         spec.factory_args["gpu_id"] = 0
     if "gpu_id" in spec.relay_config:
