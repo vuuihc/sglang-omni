@@ -85,12 +85,16 @@ classDiagram
 
     class ModelRunner {
         +execute(scheduler_output) ModelRunnerOutput
-        +prepare_forward()* hook
-        +post_forward()* hook
+        +before_prefill()* hook
+        +before_decode()* hook
+        +custom_prefill_forward()* hook
+        +custom_decode_forward()* hook
+        +post_prefill()* hook
+        +post_decode()* hook
     }
 
     class ThinkerModelRunner {
-        +prepare_forward(): inject multimodal embeds
+        +custom_prefill_forward(): inject multimodal embeds
     }
 
     class FeedbackARModelRunner {
@@ -297,14 +301,14 @@ class OutgoingMessage:
 ## Model Runner + Callbacks
 
 ```
-ForwardBatch → prepare_forward() → forward() → post_forward() → sample() → ModelRunnerOutput
-                    ↑ hook                          ↑ hook
+ForwardBatch → before_*() → custom_*_forward() or standard forward → post_*() → sample/output
+                    ↑ hook             ↑ explicit custom path          ↑ hook
 ```
 
 | Runner                    | Used by                | Hook behavior                                                        |
 | ------------------------- | ---------------------- | -------------------------------------------------------------------- |
-| **ThinkerModelRunner**    | Qwen3 / Ming thinker   | prepare_forward: inject multimodal embeddings                        |
-| **FeedbackARModelRunner** | Qwen3 talker, Fish TTS | 3 callbacks: write_buffers_fn, extract_output_fn, prefill_forward_fn |
+| **ThinkerModelRunner**    | Qwen3 / Ming thinker   | `custom_prefill_forward`: inject multimodal embeddings                |
+| **FeedbackARModelRunner** | Qwen3 talker, Fish TTS | `before_*` buffer writes + optional explicit `custom_*_forward` paths |
 
 > **Note (Chenyang):** Open question — with the current design, can we treat CUDA Graph and `torch.compile` as class-sharable rather than configured model by model? (Jingwen) Yes, currently it's intentionally designed to be so (that's why such modelrunner abstraction exists, but special model has special cases).
 
@@ -318,39 +322,49 @@ Shared execute pipeline for all AR models.
 class ModelRunner:
     def execute(self, scheduler_output):
         forward_batch = ForwardBatch.init_new(...)
-        batch_result = self.prepare_forward(...)  # hook
+        if is_prefill:
+            self.before_prefill(forward_batch, ...)
+            batch_result = self.custom_prefill_forward(forward_batch, ...)
+        else:
+            self.before_decode(forward_batch, ...)
+            batch_result = self.custom_decode_forward(forward_batch, ...)
         if batch_result is None:
             batch_result = self.tp_worker.forward_batch_generation(forward_batch)
-        self.post_forward(batch_result, ...)       # hook
+        if is_prefill:
+            self.post_prefill(batch_result, ...)
+        else:
+            self.post_decode(batch_result, ...)
         # sample, logit processing, output extraction
         return ModelRunnerOutput(...)
 ```
 
 Shared: `ForwardBatch` construction, sampling, repetition penalty, codec suppression, output processing.
 
-> **Note (Chenyang):** The earlier `prepare_forward` / `if batch_result is None` block was misleading — `prepare_forward` was doing two unrelated things (mutating the batch and short-circuiting to a custom forward result). The version above splits those into `before_forward` (always mutates in place) and an explicit `custom_forward` branch, which makes the prefill-with-injection path (Fish TTS) honest instead of disguising it as "the hook returned a value." My suggestions are:
+> **Note (Chenyang):** The earlier `prepare_forward` / `if batch_result is None` block was misleading — `prepare_forward` was doing two unrelated things (mutating the batch and short-circuiting to a custom forward result). The implementation now splits those concerns into phase-aware `before_prefill` / `before_decode` mutation hooks and explicit `custom_prefill_forward` / `custom_decode_forward` hooks.
 
 ```python
 def execute(self, scheduler_output):
     forward_batch = ForwardBatch.init_new(...)
 
-    # Mutate forward_batch in place (e.g. inject multimodal embeds).
-    self.before_forward(forward_batch, ...)
-
-    # Two mutually exclusive paths:
-    #   - custom_forward: model-specific forward (e.g. Fish TTS prefill
-    #     with VQ embedding injection).
-    #   - default forward: standard tp_worker.forward_batch_generation.
-    if self.has_custom_forward:
-        forward_output = self.custom_forward(forward_batch, ...)
+    # Mutate request/model state in place.
+    if is_prefill:
+        self.before_prefill(forward_batch, ...)
+        forward_output = self.custom_prefill_forward(forward_batch, ...)
     else:
+        self.before_decode(forward_batch, ...)
+        forward_output = self.custom_decode_forward(forward_batch, ...)
+
+    if forward_output is None:
         forward_output = self.tp_worker.forward_batch_generation(forward_batch)
 
-    self.post_forward(forward_output, ...)
+    if is_prefill:
+        self.post_prefill(forward_output, ...)
+    else:
+        self.post_decode(forward_output, ...)
     return ModelRunnerOutput(...)
 ```
 
-> **【TODO: Jingwen, have we done this part】**
+> Resolved.
 
 ### `ThinkerModelRunner`
 
@@ -358,7 +372,7 @@ Injects multimodal embeddings (image / video / audio) + deepstack before forward
 
 ```python
 class ThinkerModelRunner(ModelRunner):
-    def prepare_forward(self, ...):
+    def custom_prefill_forward(self, ...):
         # Inject multimodal embeds into forward_batch
         ...
 ```
@@ -373,14 +387,19 @@ class FeedbackARModelRunner(ModelRunner):
                  write_buffers_fn, extract_output_fn, prefill_forward_fn=None):
         ...
 
-    def prepare_forward(self, ...):
+    def before_decode(self, ...):
         if decode:
             self._write_buffers(model, schedule_batch, requests)
-        elif prefill and self._prefill_forward:
+
+    def custom_prefill_forward(self, ...):
+        if prefill and self._prefill_forward:
             return self._prefill_forward(tp_worker, forward_batch, ...)
         return None
 
-    def post_forward(self, ...):
+    def post_prefill(self, ...):
+        self._extract_output(model, schedule_batch, requests, outbox)
+
+    def post_decode(self, ...):
         self._extract_output(model, schedule_batch, requests, outbox)
 ```
 
@@ -481,7 +500,7 @@ models/qwen3_omni/
 ├── stages.py              — 8 factories
 ├── routing.py             — 8 routing functions
 ├── request_builders.py    — build thinker/talker/encoder requests
-├── payload_types.py       — PipelineState, OmniEvent, ThinkerOutput
+├── payload_types.py       — Qwen3OmniPipelineState, Qwen3OmniEvent, ThinkerOutput
 ├── callbacks.py           — write_talker_buffers, extract_talker_output, talker_prefill_forward
 ├── hf_config.py           — HF config classes
 ├── merge.py               — Merge 3 encoder outputs for thinker
@@ -502,7 +521,7 @@ Speech pipeline (8 stages): `preprocessing → image_encoder → audio_encoder �
 
 > **Note (Chenyang):**
 >
-> 1. `PipelineState` and `OmniEvent` are ambiguous names — both sound like they belong to the framework, but they're model-specific. Rename later. **【TODO: Jingwen, have we done this part】**
+> 1. `PipelineState` and `OmniEvent` were ambiguous names — both sounded like they belonged to the framework, but were model-specific. Resolved by using model-qualified payload names such as `Qwen3OmniPipelineState` / `Qwen3OmniEvent`.
 > 2. "Image tower" / "Audio tower" — why "tower"? Inherited terminology from VLM literature. Worth aligning on either "encoder" or "tower" consistently rather than mixing. Jingwen: this is followed the name from official qwen3-omni.
 > 3. `image_encoder` → `audio_encoder` should run in parallel, not sequentially as the arrow chain might suggest. There should also be design space for offloading them to CPU. Jingwen: Changed.
 
@@ -612,8 +631,7 @@ Derived (computed from stages, not set manually): `terminal_stages`, `gpu_placem
 
 ```
 pipeline/
-├── stage_process.py    # StageProcessSpec (picklable) + subprocess entrypoint
-├── stage_group.py      # StageGroup — manages N processes per stage
+├── stage_workers.py    # StageProcessSpec, subprocess entrypoint, StageGroup
 └── mp_runner.py        # MultiProcessRunner — orchestrates all groups
 ```
 
@@ -642,7 +660,7 @@ graph TB
 
 > **Note (Chenyang):** `stage_group.py` and `stage_process.py` are tightly coupled — `StageGroup` is the only consumer of `StageProcessSpec`, the subprocess entrypoint is ~40 lines, and the spec is a small dataclass. None of the three justifies its own file. Merging into a single `stage_workers.py` keeps everything about "how a stage's processes get defined, spawned, and managed" in one place, and leaves `mp_runner.py` focused on cross-stage orchestration. Two files, cleaner ownership.
 
-> **【TODO: Jingwen, have we merged these files】**
+> Resolved: `StageProcessSpec`, `StageGroup`, and the subprocess entrypoint now live together in `stage_workers.py`.
 
 ### `StageProcessSpec`
 

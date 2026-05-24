@@ -200,7 +200,7 @@ that happened to contain an older version of the test.
   - tokenizer and preprocessing fallback behavior
   - memory flag contracts
   - colocation config and SGLang AR budget contracts
-  - `PipelineState` request builders
+  - `Qwen3OmniPipelineState` request builders
   - talker behavior, including projected prefill tensor storage/slicing, decode
     feedback/text FIFO consumption, and replay of generated-token input embeds
     after decode retract

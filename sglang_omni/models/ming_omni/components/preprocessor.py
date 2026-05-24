@@ -14,7 +14,7 @@ from sglang_omni.models.ming_omni.components.common import (
     load_ming_config,
     load_ming_tokenizer,
 )
-from sglang_omni.models.ming_omni.io import PipelineState, PromptInputs
+from sglang_omni.models.ming_omni.io import MingOmniPipelineState, PromptInputs
 from sglang_omni.models.ming_omni.pipeline.next_stage import AUDIO_STAGE, IMAGE_STAGE
 from sglang_omni.preprocessing.audio import compute_audio_cache_key, load_audio_path
 from sglang_omni.preprocessing.image import (
@@ -404,7 +404,7 @@ class MingPreprocessor:
             if image_cache_key:
                 encoder_inputs[IMAGE_STAGE]["cache_key"] = image_cache_key
 
-        state = PipelineState(
+        state = MingOmniPipelineState(
             raw_inputs=raw_inputs,
             prompt=prompt,
             encoder_inputs=encoder_inputs,

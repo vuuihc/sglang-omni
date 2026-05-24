@@ -28,23 +28,21 @@ logger = logging.getLogger(__name__)
 class HiggsTTSModelRunner(ModelRunner):
     """ModelRunner for :class:`HiggsTTSModel`."""
 
-    def prepare_prefill(self, forward_batch, schedule_batch, requests):
+    def before_prefill(self, forward_batch, schedule_batch, requests):
         del schedule_batch
         forward_batch.req_ids = [req.request_id for req in requests]
         forward_batch.input_embeds = self._build_prefill_input_embeds(
             forward_batch, requests
         )
-        return None
 
     def post_prefill(self, result, forward_batch, schedule_batch, requests):
         del forward_batch, schedule_batch
         self._collect_step_outputs(result, requests)
 
-    def prepare_decode(self, forward_batch, schedule_batch, requests):
+    def before_decode(self, forward_batch, schedule_batch, requests):
         del schedule_batch
         forward_batch.req_ids = [req.request_id for req in requests]
         self._populate_cg_buffers(forward_batch, requests)
-        return None
 
     def post_decode(self, result, forward_batch, schedule_batch, requests):
         del schedule_batch

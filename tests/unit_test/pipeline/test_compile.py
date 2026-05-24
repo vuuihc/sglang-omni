@@ -7,7 +7,7 @@ import pytest
 from sglang_omni.config.schema import EndpointsConfig, PipelineConfig
 from sglang_omni.pipeline.mp_runner import _build_stage_groups
 from sglang_omni.pipeline.runtime_config import prepare_pipeline_runtime
-from sglang_omni.pipeline.stage_process import get_stage_process_env
+from sglang_omni.pipeline.stage_workers import get_stage_process_env
 from tests.unit_test.fixtures.pipeline_fakes import FakeMpContext, fake_factory_path
 from tests.unit_test.pipeline.helpers import stage
 

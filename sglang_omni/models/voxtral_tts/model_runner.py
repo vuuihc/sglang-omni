@@ -13,7 +13,7 @@ from sglang_omni.models.voxtral_tts.acoustic_transformer import AudioSpecialToke
 
 
 class VoxtralTTSModelRunner(ModelRunner):
-    def prepare_prefill(
+    def custom_prefill_forward(
         self,
         forward_batch: Any,
         schedule_batch: Any,
@@ -23,7 +23,7 @@ class VoxtralTTSModelRunner(ModelRunner):
         input_embeds = self._build_prefill_input_embeds(forward_batch, requests)
         return self._forward_with_input_embeds(forward_batch, input_embeds)
 
-    def prepare_decode(
+    def custom_decode_forward(
         self,
         forward_batch: Any,
         schedule_batch: Any,
