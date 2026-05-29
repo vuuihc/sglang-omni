@@ -229,7 +229,7 @@ def test_higgs_model_runner_skips_already_finished_eager_request() -> None:
 # HiggsAudioCodec.encode_batch
 # ---------------------------------------------------------------------------
 
-def _make_fake_codec(encode_calls: list) -> HiggsAudioCodec:
+def _make_fake_encoder_codec(encode_calls: list) -> HiggsAudioCodec:
     """Return a HiggsAudioCodec whose model.encode is mocked."""
     from unittest.mock import MagicMock
 
@@ -250,13 +250,13 @@ def _make_fake_codec(encode_calls: list) -> HiggsAudioCodec:
 
 
 def test_higgs_audio_codec_encode_batch_empty() -> None:
-    codec = _make_fake_codec([])
+    codec = _make_fake_encoder_codec([])
     assert codec.encode_batch([]) == []
 
 
 def test_higgs_audio_codec_encode_batch_same_length_batched() -> None:
     calls: list = []
-    codec = _make_fake_codec(calls)
+    codec = _make_fake_encoder_codec(calls)
 
     wav1 = torch.zeros(1, 1, 24000)
     wav2 = torch.ones(1, 1, 24000) * 0.5
@@ -271,7 +271,7 @@ def test_higgs_audio_codec_encode_batch_same_length_batched() -> None:
 
 def test_higgs_audio_codec_encode_batch_short_waveforms_padded_and_batched() -> None:
     calls: list = []
-    codec = _make_fake_codec(calls)
+    codec = _make_fake_encoder_codec(calls)
 
     # Both < 1 s → padded to SAMPLE_RATE=24000, same bucket → one forward pass
     wav1 = torch.zeros(1, 1, 8000)
@@ -286,7 +286,7 @@ def test_higgs_audio_codec_encode_batch_short_waveforms_padded_and_batched() -> 
 
 def test_higgs_audio_codec_encode_batch_different_lengths_separate_calls() -> None:
     calls: list = []
-    codec = _make_fake_codec(calls)
+    codec = _make_fake_encoder_codec(calls)
 
     wav1 = torch.zeros(1, 1, 24000)  # 1 s
     wav2 = torch.zeros(1, 1, 48000)  # 2 s
@@ -301,7 +301,7 @@ def test_higgs_audio_codec_encode_batch_different_lengths_separate_calls() -> No
 
 def test_higgs_audio_codec_encode_batch_order_preserved() -> None:
     calls: list = []
-    codec = _make_fake_codec(calls)
+    codec = _make_fake_encoder_codec(calls)
 
     # Interleaved lengths: [48000, 24000, 48000] → bucket 48000=[0,2], 24000=[1]
     wavs = [
