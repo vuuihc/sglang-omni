@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from sglang_omni.models.higgs_tts import stages
+from sglang_omni.models.higgs_tts.audio_codec import HiggsAudioCodec
 from sglang_omni.models.higgs_tts.model_runner import HiggsTTSModelRunner
 from sglang_omni.models.higgs_tts.payload_types import HiggsTtsState
 from sglang_omni.models.higgs_tts.utils import EOC_ID
@@ -222,6 +223,95 @@ def test_higgs_model_runner_skips_already_finished_eager_request() -> None:
 
     assert data.output_codes == []
     assert result.next_token_ids.tolist() == [0]
+
+
+# ---------------------------------------------------------------------------
+# HiggsAudioCodec.encode_batch
+# ---------------------------------------------------------------------------
+
+def _make_fake_codec(encode_calls: list) -> HiggsAudioCodec:
+    """Return a HiggsAudioCodec whose model.encode is mocked."""
+    N = 8  # num_codebooks
+
+    def fake_encode(batch: torch.Tensor):
+        B, _, L = batch.shape
+        T = max(L // 320, 1)
+        encode_calls.append(tuple(batch.shape))
+        return SimpleNamespace(audio_codes=torch.zeros(B, N, T, dtype=torch.long))
+
+    codec = object.__new__(HiggsAudioCodec)
+    codec.device = torch.device("cpu")
+    codec._dtype = torch.float32
+    codec.model = SimpleNamespace(encode=fake_encode)
+    return codec
+
+
+def test_higgs_audio_codec_encode_batch_empty() -> None:
+    codec = _make_fake_codec([])
+    assert codec.encode_batch([]) == []
+
+
+def test_higgs_audio_codec_encode_batch_same_length_batched() -> None:
+    calls: list = []
+    codec = _make_fake_codec(calls)
+
+    wav1 = torch.zeros(1, 1, 24000)
+    wav2 = torch.ones(1, 1, 24000) * 0.5
+
+    results = codec.encode_batch([wav1, wav2])
+
+    assert len(calls) == 1, "same-length waveforms must be batched into one forward pass"
+    assert calls[0] == (2, 1, 24000)
+    assert len(results) == 2
+    assert all(r.shape == (75, 8) for r in results)
+
+
+def test_higgs_audio_codec_encode_batch_short_waveforms_padded_and_batched() -> None:
+    calls: list = []
+    codec = _make_fake_codec(calls)
+
+    # Both < 1 s → padded to SAMPLE_RATE=24000, same bucket → one forward pass
+    wav1 = torch.zeros(1, 1, 8000)
+    wav2 = torch.zeros(1, 1, 12000)
+
+    results = codec.encode_batch([wav1, wav2])
+
+    assert len(calls) == 1, "short waveforms must be padded to same length and batched"
+    assert calls[0] == (2, 1, 24000)
+    assert len(results) == 2
+
+
+def test_higgs_audio_codec_encode_batch_different_lengths_separate_calls() -> None:
+    calls: list = []
+    codec = _make_fake_codec(calls)
+
+    wav1 = torch.zeros(1, 1, 24000)  # 1 s
+    wav2 = torch.zeros(1, 1, 48000)  # 2 s
+
+    results = codec.encode_batch([wav1, wav2])
+
+    assert len(calls) == 2, "different-length waveforms must trigger separate forward passes"
+    assert len(results) == 2
+    assert results[0].shape[0] == 75   # 24000 / 320
+    assert results[1].shape[0] == 150  # 48000 / 320
+
+
+def test_higgs_audio_codec_encode_batch_order_preserved() -> None:
+    calls: list = []
+    codec = _make_fake_codec(calls)
+
+    # Interleaved lengths: [48000, 24000, 48000] → bucket 48000=[0,2], 24000=[1]
+    wavs = [
+        torch.zeros(1, 1, 48000),
+        torch.zeros(1, 1, 24000),
+        torch.zeros(1, 1, 48000),
+    ]
+    results = codec.encode_batch(wavs)
+
+    assert len(results) == 3
+    assert results[0].shape[0] == 150
+    assert results[1].shape[0] == 75
+    assert results[2].shape[0] == 150
 
 
 def _make_payload(request_id: str, state: HiggsTtsState) -> StagePayload:

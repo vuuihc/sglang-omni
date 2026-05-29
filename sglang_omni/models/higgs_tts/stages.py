@@ -194,21 +194,25 @@ def create_audio_encoder_executor(
 
     codec = get_or_load_codec(checkpoint_dir, device, dtype)
 
-    def _encode(payload: StagePayload) -> StagePayload:
+    def _prepare_encoder_item(
+        payload: StagePayload,
+    ) -> tuple[HiggsTtsState, torch.Tensor | None]:
         state = HiggsTtsState.from_dict(payload.data)
-        waveform = state.reference_waveform
-        if waveform is None:
-            return payload
+        return state, state.reference_waveform
 
-        ref_codes_TN = codec.encode_reference(waveform, sample_rate=24000).to(
-            torch.long
-        )
-        if ref_codes_TN.ndim != 2 or ref_codes_TN.shape[1] != num_codebooks:
+    def _store_encoder_result(
+        payload: StagePayload,
+        state: HiggsTtsState,
+        codes_TN: torch.Tensor | None,
+    ) -> StagePayload:
+        if codes_TN is None:
+            return payload
+        if codes_TN.ndim != 2 or codes_TN.shape[1] != num_codebooks:
             raise ValueError(
                 f"codec output must be [T, {num_codebooks}], got "
-                f"{tuple(ref_codes_TN.shape)}"
+                f"{tuple(codes_TN.shape)}"
             )
-        delayed = apply_delay_pattern(ref_codes_TN)
+        delayed = apply_delay_pattern(codes_TN)
         state.reference_codes_delayed = delayed.tolist()
         state.prompt_token_ids = adapter.build_prompt(
             state.target_text or "",
@@ -221,8 +225,35 @@ def create_audio_encoder_executor(
         payload.data = state.to_dict()
         return payload
 
+    def _encode(payload: StagePayload) -> StagePayload:
+        state, waveform = _prepare_encoder_item(payload)
+        if waveform is None:
+            return payload
+        codes_TN = codec.encode_reference(waveform, sample_rate=24000)
+        return _store_encoder_result(payload, state, codes_TN)
+
+    def _encode_batch(payloads: list[StagePayload]) -> list[StagePayload]:
+        items = [_prepare_encoder_item(p) for p in payloads]
+        valid = [(i, w) for i, (_, w) in enumerate(items) if w is not None]
+        codes_list: list[torch.Tensor | None] = [None] * len(items)
+        if valid:
+            indices, wavs = zip(*valid)
+            encoded = codec.encode_batch(list(wavs))
+            if len(encoded) != len(valid):
+                raise RuntimeError(
+                    f"Higgs audio encoder encode_batch returned {len(encoded)} results "
+                    f"for {len(valid)} requests"
+                )
+            for idx, codes_TN in zip(indices, encoded):
+                codes_list[idx] = codes_TN
+        return [
+            _store_encoder_result(payload, state, codes_TN)
+            for payload, (state, _), codes_TN in zip(payloads, items, codes_list)
+        ]
+
     return SimpleScheduler(
         _encode,
+        batch_compute_fn=_encode_batch,
         max_batch_size=max_batch_size,
         max_batch_wait_ms=max_batch_wait_ms,
     )
