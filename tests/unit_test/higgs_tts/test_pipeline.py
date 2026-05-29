@@ -231,19 +231,22 @@ def test_higgs_model_runner_skips_already_finished_eager_request() -> None:
 
 def _make_fake_codec(encode_calls: list) -> HiggsAudioCodec:
     """Return a HiggsAudioCodec whose model.encode is mocked."""
+    from unittest.mock import MagicMock
+
     N = 8  # num_codebooks
 
-    def fake_encode(batch: torch.Tensor):
+    def fake_model_encode(batch: torch.Tensor):
         B, _, L = batch.shape
         T = max(L // 320, 1)
         encode_calls.append(tuple(batch.shape))
-        return SimpleNamespace(audio_codes=torch.zeros(B, N, T, dtype=torch.long))
+        result = MagicMock()
+        result.audio_codes = torch.zeros(B, N, T, dtype=torch.long)
+        return result
 
-    codec = object.__new__(HiggsAudioCodec)
-    codec.device = torch.device("cpu")
-    codec._dtype = torch.float32
-    codec.model = SimpleNamespace(encode=fake_encode)
-    return codec
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = fake_model_encode
+    mock_model.parameters.return_value = iter([torch.zeros(1)])
+    return HiggsAudioCodec(mock_model, device=torch.device("cpu"))
 
 
 def test_higgs_audio_codec_encode_batch_empty() -> None:
