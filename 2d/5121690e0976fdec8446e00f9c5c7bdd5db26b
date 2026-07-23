@@ -1,0 +1,36 @@
+examples/configs/qwen3_tts_0_6b_4090_24gb.yaml
+  s_ac3035178554c8::t_e98582ba65ff87 1-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2d5121690e0976fdec8446e00f9c5c7bdd5db26b",
+  "prompts": {},
+  "sessions": {
+    "s_ac3035178554c8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f8abf-8bab-76d3-9e96-f160050353e8",
+        "model": "unknown"
+      },
+      "human_author": "Ethan ZHU <3747378+vuuihc@users.noreply.github.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {
+    "s_46fd8d00d7da9b": {
+      "tool": "trae",
+      "conversation_id": "6a60b8c91a339156033da18e",
+      "session_id": "6a60b8c91a339156033da18e",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    },
+    "s_46fd8d00d7da9b::t_ed3bef4cf54fc6": {
+      "tool": "trae",
+      "conversation_id": "6a60b8c91a339156033da18e",
+      "session_id": "6a60b8c91a339156033da18e",
+      "status": "remote_only",
+      "message": "Remote transcript resolution is not implemented yet for TRAE prompts."
+    }
+  }
+}
